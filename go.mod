@@ -1,6 +1,6 @@
 module github.com/jc-lab/tarfs
 
-go 1.22
+go 1.20
 
 require github.com/quay/claircore v1.5.28
 

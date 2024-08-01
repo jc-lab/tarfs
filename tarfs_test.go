@@ -153,6 +153,82 @@ func TestFS(t *testing.T) {
 			})
 		}
 	})
+
+	t.Run("Seek", func(t *testing.T) {
+		f, err := os.Open(name)
+		if err != nil {
+			t.Error(err)
+		}
+		t.Cleanup(func() {
+			if err := f.Close(); err != nil {
+				t.Error(err)
+			}
+		})
+		sys, err := New(f)
+		if err != nil {
+			t.Error(err)
+		}
+		for _, n := range fileset {
+			name := n
+			f, err := os.Open(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer f.Close()
+
+			stat, err := f.Stat()
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if stat.Size() < 100 {
+				continue
+			}
+
+			t.Run(name, func(t *testing.T) {
+				h := sha256.New()
+				if _, err := f.Seek(100, io.SeekStart); err != nil {
+					t.Error(err)
+				}
+				if _, err := io.Copy(h, f); err != nil {
+					t.Error(err)
+				}
+				if _, err := f.Seek(50, io.SeekStart); err != nil {
+					t.Error(err)
+				}
+				if _, err := io.Copy(h, f); err != nil {
+					t.Error(err)
+				}
+				want := h.Sum(nil)
+
+				h.Reset()
+
+				f2, err := sys.Open(name)
+				if err != nil {
+					t.Error(err)
+				}
+				defer f2.Close()
+				f2seek := f2.(io.ReadSeekCloser)
+				if _, err := f2seek.Seek(100, io.SeekStart); err != nil {
+					t.Error(err)
+				}
+				if _, err := io.Copy(h, f2seek); err != nil {
+					t.Error(err)
+				}
+				if _, err := f2seek.Seek(50, io.SeekStart); err != nil {
+					t.Error(err)
+				}
+				if _, err := io.Copy(h, f2seek); err != nil {
+					t.Error(err)
+				}
+				got := h.Sum(nil)
+
+				if !bytes.Equal(got, want) {
+					t.Errorf("got: %x, want: %x", got, want)
+				}
+			})
+		}
+	})
 }
 
 // TestEmpty tests that a wholly empty tar still creates an empty root.

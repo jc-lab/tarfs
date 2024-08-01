@@ -2,6 +2,7 @@ package tarfs
 
 import (
 	"archive/tar"
+	"errors"
 	"io"
 	"io/fs"
 	"path"
@@ -12,8 +13,10 @@ var _ fs.File = (*file)(nil)
 
 // File implements fs.File.
 type file struct {
-	h *tar.Header
-	r *tar.Reader
+	h  *tar.Header
+	sr *io.SectionReader
+	r  *tar.Reader
+	p  int64
 }
 
 func (f *file) Close() error {
@@ -21,11 +24,90 @@ func (f *file) Close() error {
 }
 
 func (f *file) Read(b []byte) (int, error) {
-	return f.r.Read(b)
+	n, err := f.r.Read(b)
+	if n > 0 {
+		f.p += int64(n)
+	}
+	return n, err
 }
 
 func (f *file) Stat() (fs.FileInfo, error) {
 	return f.h.FileInfo(), nil
+}
+
+func (f *file) reopen() error {
+	if _, err := f.sr.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+	r := tar.NewReader(f.sr)
+	if _, err := r.Next(); err != nil {
+		return err
+	}
+	f.p = 0
+	f.r = r
+	return nil
+}
+
+func (f *file) Seek(offset int64, whence int) (int64, error) {
+	var newp int64
+	switch whence {
+	case io.SeekStart:
+		newp = offset
+	case io.SeekCurrent:
+		if offset >= 0 {
+			if err := discard(f, offset); err != nil {
+				return 0, err
+			}
+			return f.p, nil
+		}
+		newp = f.p + offset
+	case io.SeekEnd:
+		stat, err := f.Stat()
+		if err != nil {
+			return 0, err
+		}
+		newp = stat.Size() + offset
+	default:
+		return 0, errors.New("invalid whence")
+	}
+	if newp < 0 {
+		return 0, errors.New("negative position")
+	}
+	if err := f.reopen(); err != nil {
+		return 0, err
+	}
+	if err := discard(f, newp); err != nil {
+		return 0, err
+	}
+	return f.p, nil
+}
+
+func discard(r io.Reader, size int64) error {
+	buf := make([]byte, 4096)
+	var totalRead int64
+
+	for totalRead < size {
+		bytesToRead := size - totalRead
+		if bytesToRead > int64(len(buf)) {
+			bytesToRead = int64(len(buf))
+		}
+
+		n, err := r.Read(buf[:bytesToRead])
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return err
+		}
+
+		totalRead += int64(n)
+	}
+
+	if totalRead < size {
+		return errors.New("failed to discard the specified amount of data")
+	}
+
+	return nil
 }
 
 var _ fs.ReadDirFile = (*dir)(nil)

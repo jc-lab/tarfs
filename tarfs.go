@@ -376,16 +376,16 @@ func (f *FS) Open(name string) (fs.File, error) {
 		return nil, err
 	}
 	typ := i.h.FileInfo().Mode().Type()
-	var r *tar.Reader
+	var sr *io.SectionReader
 	switch {
 	case typ.IsRegular() && i.h.Typeflag != tar.TypeLink:
-		r = tar.NewReader(io.NewSectionReader(f.r, i.off, i.sz))
+		sr = io.NewSectionReader(f.r, i.off, i.sz)
 	case typ.IsRegular() && i.h.Typeflag == tar.TypeLink:
 		tgt, err := f.getInode(op, i.h.Linkname)
 		if err != nil {
 			return nil, err
 		}
-		r = tar.NewReader(io.NewSectionReader(f.r, tgt.off, tgt.sz))
+		sr = io.NewSectionReader(f.r, tgt.off, tgt.sz)
 	case typ.IsDir():
 		d := dir{
 			h:  i.h,
@@ -409,6 +409,7 @@ func (f *FS) Open(name string) (fs.File, error) {
 			Err:  fs.ErrExist,
 		}
 	}
+	r := tar.NewReader(sr)
 	if _, err := r.Next(); err != nil {
 		return nil, &fs.PathError{
 			Op:   op,
@@ -417,8 +418,9 @@ func (f *FS) Open(name string) (fs.File, error) {
 		}
 	}
 	return &file{
-		h: i.h,
-		r: r,
+		h:  i.h,
+		sr: sr,
+		r:  r,
 	}, nil
 }
 
